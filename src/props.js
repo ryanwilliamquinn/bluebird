@@ -1,44 +1,89 @@
 "use strict";
-module.exports = function(Promise, PromiseArray) {
-    var PropertiesPromiseArray = require("./properties_promise_array.js")(
-        Promise, PromiseArray);
-    var util = require("./util.js");
-    var apiRejection = require("./errors_api_rejection")(Promise);
-    var isObject = util.isObject;
+module.exports = function(Promise, PromiseArray, cast) {
+var ASSERT = require("./assert.js");
+var util = require("./util.js");
+var apiRejection = require("./errors_api_rejection")(Promise);
+var isObject = util.isObject;
+var es5 = require("./es5.js");
 
-    function Promise$_Props(promises, useBound, caller) {
-        var ret;
-        var castValue = Promise._cast(promises, caller, void 0);
+function PropertiesPromiseArray(obj) {
+    var keys = es5.keys(obj);
+    var len = keys.length;
+    var values = new Array(len * 2);
+    for (var i = 0; i < len; ++i) {
+        var key = keys[i];
+        values[i] = obj[key];
+        values[i + len] = key;
+    }
+    this.constructor$(values);
+}
+util.inherits(PropertiesPromiseArray, PromiseArray);
 
-        if (!isObject(castValue)) {
-            return apiRejection(PROPS_TYPE_ERROR);
+//Override
+PropertiesPromiseArray.prototype._init = function () {
+    this._init$(undefined, RESOLVE_OBJECT) ;
+};
+
+//Override
+PropertiesPromiseArray.prototype._promiseFulfilled = function (value, index) {
+    if (this._isResolved()) return;
+    ASSERT(!(value instanceof Promise));
+    this._values[index] = value;
+    var totalResolved = ++this._totalResolved;
+    if (totalResolved >= this._length) {
+        var val = {};
+        var keyOffset = this.length();
+        for (var i = 0, len = this.length(); i < len; ++i) {
+            val[this._values[i + keyOffset]] = this._values[i];
         }
-        else if (Promise.is(castValue)) {
-            ret = castValue._then(Promise.props, void 0, void 0,
-                            void 0, void 0, caller);
-        }
-        else {
-            ret = new PropertiesPromiseArray(
-                castValue,
-                caller,
-                useBound === USE_BOUND && castValue._isBound()
-                            ? castValue._boundTo
-                            : void 0
-           ).promise();
-            //The constructor took care of it
-            useBound = DONT_USE_BOUND;
-        }
-        if (useBound === USE_BOUND && castValue._isBound()) {
-            ret._setBoundTo(castValue._boundTo);
-        }
-        return ret;
+        this._resolve(val);
+    }
+};
+
+//Override
+PropertiesPromiseArray.prototype._promiseProgressed = function (value, index) {
+    if (this._isResolved()) return;
+
+    this._promise._progress({
+        key: this._values[index + this.length()],
+        value: value
+    });
+};
+
+// Override
+PropertiesPromiseArray.prototype.shouldCopyValues = function () {
+    return false;
+};
+
+// Override
+PropertiesPromiseArray.prototype.getActualLength = function (len) {
+    return len >> 1;
+};
+
+function Promise$_Props(promises) {
+    var ret;
+    var castValue = cast(promises, undefined);
+
+    if (!isObject(castValue)) {
+        return apiRejection(PROPS_TYPE_ERROR);
+    } else if (castValue instanceof Promise) {
+        ret = castValue._then(
+            Promise.props, undefined, undefined, undefined, undefined);
+    } else {
+        ret = new PropertiesPromiseArray(castValue).promise();
     }
 
-    Promise.prototype.props = function Promise$props() {
-        return Promise$_Props(this, USE_BOUND, this.props);
-    };
+    if (castValue instanceof Promise) {
+        ret._propagateFrom(castValue, PROPAGATE_BIND);
+    }
+    return ret;
+}
 
-    Promise.props = function Promise$Props(promises) {
-        return Promise$_Props(promises, DONT_USE_BOUND, Promise.props);
-    };
+Promise.prototype.props = function () {
+    return Promise$_Props(this);
+};
+
+Promise.props = function (promises) {
+    return Promise$_Props(promises);
+};
 };

@@ -1,3 +1,4 @@
+"use strict";
 var assert = require("assert");
 
 var adapter = require("../../js/debug/bluebird.js");
@@ -7,7 +8,6 @@ var pending = adapter.pending;
 
 var Promise = fulfilled().constructor;
 
-Promise.prototype.progress = Promise.prototype.progressed;
 
 
 var Q = function(p) {
@@ -110,7 +110,16 @@ describe("nodeify", function () {
             sinon.assert.calledOnce(spy);
             sinon.assert.calledWith(spy, null, 10);
         }, 100);
+    });
 
+    it("calls back with an undefined resolution", function (done) {
+        var spy = sinon.spy();
+        Q().nodeify(spy);
+        setTimeout(function(){
+            sinon.assert.calledOnce(spy);
+            sinon.assert.calledWithExactly(spy, null);
+            done();
+        }, 10);
     });
 
     it("calls back with an error", function () {
@@ -126,6 +135,10 @@ describe("nodeify", function () {
         return Q(10).nodeify().then(function (ten) {
             assert(10 === ten);
         });
+    });
+
+    it("returns undefined when a callback is passed", function () {
+        return 'undefined' === typeof Q(10).nodeify(function () {});
     });
 
 });
@@ -178,6 +191,28 @@ if( isNodeJS ) {
                 assert( turns === 1);
                 done();
             });
+        });
+
+        it("always returns promise for now", function(done){
+            Promise.resolve(3).nodeify().then(function() {
+                var a = 0;
+                Promise.resolve(3).nodeify(function(){
+                    a++;
+                }).then(function(){
+                    assert(1 == 1);
+                    done();
+                });
+            })
+        });
+
+        it("should spread arguments with spread option", function(done) {
+            Promise.resolve([1,2,3]).nodeify(function(err, a, b, c) {
+                assert(err === null);
+                assert(a === 1);
+                assert(b === 2);
+                assert(c === 3);
+                done();
+            }, {spread: true});
         });
     });
 }

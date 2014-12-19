@@ -1,6 +1,6 @@
 var isES5 = (function(){
     "use strict";
-    return this === void 0;
+    return this === undefined;
 })();
 
 if (isES5) {
@@ -10,16 +10,18 @@ if (isES5) {
         keys: Object.keys,
         getPrototypeOf: Object.getPrototypeOf,
         isArray: Array.isArray,
-        isES5: isES5
+        isES5: isES5,
+        propertyIsWritable: function(obj, prop) {
+            var descriptor = Object.getOwnPropertyDescriptor(obj, prop);
+            return !!(!descriptor || descriptor.writable || descriptor.set);
+        }
     };
-}
-
-else {
+} else {
     var has = {}.hasOwnProperty;
     var str = {}.toString;
     var proto = {}.constructor.prototype;
 
-    function ObjectKeys(o) {
+    var ObjectKeys = function (o) {
         var ret = [];
         for (var key in o) {
             if (has.call(o, key)) {
@@ -29,16 +31,16 @@ else {
         return ret;
     }
 
-    function ObjectDefineProperty(o, key, desc) {
+    var ObjectDefineProperty = function (o, key, desc) {
         o[key] = desc.value;
         return o;
     }
 
-    function ObjectFreeze(obj) {
+    var ObjectFreeze = function (obj) {
         return obj;
     }
 
-    function ObjectGetPrototypeOf(obj) {
+    var ObjectGetPrototypeOf = function (obj) {
         try {
             return Object(obj).constructor.prototype;
         }
@@ -47,7 +49,7 @@ else {
         }
     }
 
-    function ArrayIsArray(obj) {
+    var ArrayIsArray = function (obj) {
         try {
             return str.call(obj) === "[object Array]";
         }
@@ -62,6 +64,9 @@ else {
         defineProperty: ObjectDefineProperty,
         freeze: ObjectFreeze,
         getPrototypeOf: ObjectGetPrototypeOf,
-        isES5: isES5
+        isES5: isES5,
+        propertyIsWritable: function() {
+            return true;
+        }
     };
 }

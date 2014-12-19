@@ -1,160 +1,175 @@
 "use strict";
-module.exports = function(
-    Promise, Promise$_CreatePromiseArray,
-    PromiseArray, apiRejection, INTERNAL) {
+module.exports = function(Promise, PromiseArray, apiRejection, cast, INTERNAL) {
+var util = require("./util.js");
+var tryCatch4 = util.tryCatch4;
+var tryCatch3 = util.tryCatch3;
+var errorObj = util.errorObj;
+function ReductionPromiseArray(promises, fn, accum, _each) {
+    this.constructor$(promises);
+    this._preservedValues = _each === INTERNAL ? [] : null;
+    // `false` = initialValue provided as `accum` argument
+    // `true` = treat the 0th value as initialValue
+    this._zerothIsAccum = (accum === undefined);
+    // `true` = we've received our initialValue
+    this._gotAccum = false;
+    // index of the value we are in the process of reducing
+    this._reducingIndex = (this._zerothIsAccum ? 1 : 0);
+    // Array is established once we have a known length
+    this._valuesPhase = undefined;
 
-    var ASSERT = require("./assert.js");
-
-    function Reduction(callback, index, accum, items, receiver) {
-        this.promise = new Promise(INTERNAL);
-        this.index = index;
-        this.length = items.length;
-        this.items = items;
-        this.callback = callback;
-        this.receiver = receiver;
-        this.accum = accum;
+    var maybePromise = cast(accum, undefined);
+    var rejected = false;
+    var isPromise = maybePromise instanceof Promise;
+    if (isPromise) {
+        if (maybePromise.isPending()) {
+            maybePromise._proxyPromiseArray(this, -1);
+        } else if (maybePromise.isFulfilled()) {
+            accum = maybePromise._settledValue;
+            this._gotAccum = true;
+        } else {
+            maybePromise._unsetRejectionIsUnhandled();
+            this._reject(maybePromise.reason());
+            rejected = true;
+        }
     }
+    if (!(isPromise || this._zerothIsAccum)) this._gotAccum = true;
+    this._callback = fn;
+    this._accum = accum;
+    if (!rejected) this._init$(undefined, RESOLVE_CALL_METHOD);
+}
+util.inherits(ReductionPromiseArray, PromiseArray);
 
-    Reduction.prototype.reject = function Reduction$reject(e) {
-        this.promise._reject(e);
-    };
+// Override
+ReductionPromiseArray.prototype._init = function () {};
 
-    Reduction.prototype.fulfill = function Reduction$fulfill(value, index) {
-        this.accum = value;
-        this.index = index + 1;
-        this.iterate();
-    };
+// Override
+ReductionPromiseArray.prototype._resolveEmptyArray = function () {
+    // we may resolve
+    // once we've received our initialValue,
+    // or if it's the 0th value (and we don't need to wait)
+    if (this._gotAccum || this._zerothIsAccum) {
+        this._resolve(this._preservedValues !== null
+                        ? [] : this._accum);
+    }
+};
 
-    Reduction.prototype.iterate = function Reduction$iterate() {
-        var i = this.index;
-        var len = this.length;
-        var items = this.items;
-        var result = this.accum;
-        var receiver = this.receiver;
-        var callback = this.callback;
-        var iterate = this.iterate;
-
-        for(; i < len; ++i) {
-            result = Promise._cast(
-                callback.call(
-                    receiver,
-                    result,
-                    items[i],
-                    i,
-                    len
-                ),
-                iterate,
-                void 0
-            );
-
-            //Continue iteration after the returned promise fulfills
-            if (result instanceof Promise) {
-                result._then(
-                    this.fulfill, this.reject, void 0, this, i, iterate);
-                return;
-            }
+// Override
+ReductionPromiseArray.prototype._promiseFulfilled = function (value, index) {
+    var values = this._values;
+    if (values === null) return;
+    values[index] = value;
+    var length = this.length();
+    var preservedValues = this._preservedValues;
+    var isEach = preservedValues !== null;
+    var gotAccum = this._gotAccum;
+    var valuesPhase = this._valuesPhase;
+    var valuesPhaseIndex;
+    if (!valuesPhase) {
+        valuesPhase = this._valuesPhase = Array(length);
+        for (valuesPhaseIndex=0; valuesPhaseIndex<length; ++valuesPhaseIndex) {
+            valuesPhase[valuesPhaseIndex] = REDUCE_PHASE_MISSING;
         }
-        this.promise._fulfill(result);
-    };
+    }
+    valuesPhaseIndex = valuesPhase[index];
 
-    function Promise$_reducer(fulfilleds, initialValue) {
-        var fn = this;
-        var receiver = void 0;
-        if (typeof fn !== "function")  {
-            receiver = fn.receiver;
-            fn = fn.fn;
+    // Special case detection where the processing starts at index 1
+    // because no initialValue was given
+    if (index === 0 && this._zerothIsAccum) {
+        if (!gotAccum) {
+            this._accum = value;
+            this._gotAccum = gotAccum = true;
         }
-        ASSERT(typeof fn === "function");
-        var len = fulfilleds.length;
-        var accum = void 0;
-        var startIndex = 0;
-
-        if (initialValue !== void 0) {
-            accum = initialValue;
-            startIndex = 0;
+        valuesPhase[index] = ((valuesPhaseIndex === REDUCE_PHASE_MISSING)
+            ? REDUCE_PHASE_INITIAL : REDUCE_PHASE_REDUCED);
+    // the initialValue was a promise and was fulfilled
+    } else if (index === -1) {
+        if (!gotAccum) {
+            this._accum = value;
+            this._gotAccum = gotAccum = true;
+        }
+    } else {
+        if (valuesPhaseIndex === REDUCE_PHASE_MISSING) {
+            valuesPhase[index] = REDUCE_PHASE_INITIAL;
         }
         else {
-            startIndex = 1;
-            if (len > 0) accum = fulfilleds[0];
-        }
-        var i = startIndex;
-
-        if (i >= len) {
-            return accum;
-        }
-
-        var reduction = new Reduction(fn, i, accum, fulfilleds, receiver);
-        reduction.iterate();
-        return reduction.promise;
-    }
-
-    function Promise$_unpackReducer(fulfilleds) {
-        var fn = this.fn;
-        var initialValue = this.initialValue;
-        return Promise$_reducer.call(fn, fulfilleds, initialValue);
-    }
-
-    function Promise$_slowReduce(
-        promises, fn, initialValue, useBound, caller) {
-        return initialValue._then(function callee(initialValue) {
-            return Promise$_Reduce(
-                promises, fn, initialValue, useBound, callee);
-        }, void 0, void 0, void 0, void 0, caller);
-    }
-
-    function Promise$_Reduce(promises, fn, initialValue, useBound, caller) {
-        if (typeof fn !== "function") {
-            return apiRejection(NOT_FUNCTION_ERROR);
-        }
-
-        if (useBound === USE_BOUND && promises._isBound()) {
-            fn = {
-                fn: fn,
-                receiver: promises._boundTo
-            };
-        }
-
-        if (initialValue !== void 0) {
-            if (Promise.is(initialValue)) {
-                if (initialValue.isFulfilled()) {
-                    initialValue = initialValue._settledValue;
-                }
-                else {
-                    return Promise$_slowReduce(promises,
-                        fn, initialValue, useBound, caller);
-                }
+            valuesPhase[index] = REDUCE_PHASE_REDUCED;
+            if (gotAccum) {
+                this._accum = value;
             }
-
-            return Promise$_CreatePromiseArray(promises, PromiseArray, caller,
-                useBound === USE_BOUND && promises._isBound()
-                    ? promises._boundTo
-                    : void 0)
-                .promise()
-                ._then(Promise$_unpackReducer, void 0, void 0, {
-                    fn: fn,
-                    initialValue: initialValue
-                }, void 0, Promise.reduce);
         }
-        return Promise$_CreatePromiseArray(promises, PromiseArray, caller,
-                useBound === USE_BOUND && promises._isBound()
-                    ? promises._boundTo
-                    : void 0).promise()
-            //Currently smuggling internal data has a limitation
-            //in that no promises can be chained after it.
-            //One needs to be able to chain to get at
-            //the reduced results, so fast case is only possible
-            //when there is no initialValue.
-            ._then(Promise$_reducer, void 0, void 0, fn, void 0, caller);
+    }
+    // no point in reducing anything until we have an initialValue
+    if (!gotAccum) return;
+
+    var callback = this._callback;
+    var receiver = this._promise._boundTo;
+    var ret;
+
+    for (var i = this._reducingIndex; i < length; ++i) {
+        valuesPhaseIndex = valuesPhase[i];
+        if (valuesPhaseIndex === REDUCE_PHASE_REDUCED) {
+            this._reducingIndex = i + 1;
+            continue;
+        }
+        if (valuesPhaseIndex !== REDUCE_PHASE_INITIAL) return;
+        value = values[i];
+        if (value instanceof Promise) {
+            if (value.isFulfilled()) {
+                value = value._settledValue;
+            } else if (value.isPending()) {
+                // Continue later when the promise at current index fulfills
+                return;
+            } else {
+                value._unsetRejectionIsUnhandled();
+                return this._reject(value.reason());
+            }
+        }
+
+        if (isEach) {
+            preservedValues.push(value);
+            ret = tryCatch3(callback, receiver, value, i, length);
+        }
+        else {
+            ret = tryCatch4(callback, receiver, this._accum, value, i, length);
+        }
+
+        if (ret === errorObj) return this._reject(ret.e);
+
+        var maybePromise = cast(ret, undefined);
+        if (maybePromise instanceof Promise) {
+            // Callback returned a pending
+            // promise so continue iteration when it fulfills
+            if (maybePromise.isPending()) {
+                valuesPhase[i] = REDUCE_PHASE_REDUCING;
+                return maybePromise._proxyPromiseArray(this, i);
+            } else if (maybePromise.isFulfilled()) {
+                ret = maybePromise._settledValue;
+            } else {
+                maybePromise._unsetRejectionIsUnhandled();
+                return this._reject(maybePromise._settledValue);
+            }
+        }
+
+        this._reducingIndex = i + 1;
+        this._accum = ret;
     }
 
+    // end-game, once everything has been resolved
+    if (this._reducingIndex < length) return;
+    this._resolve(isEach ? preservedValues : this._accum);
+};
 
-    Promise.reduce = function Promise$Reduce(promises, fn, initialValue) {
-        return Promise$_Reduce(promises, fn,
-            initialValue, DONT_USE_BOUND, Promise.reduce);
-    };
+function reduce(promises, fn, initialValue, _each) {
+    if (typeof fn !== "function") return apiRejection(NOT_FUNCTION_ERROR);
+    var array = new ReductionPromiseArray(promises, fn, initialValue, _each);
+    return array.promise();
+}
 
-    Promise.prototype.reduce = function Promise$reduce(fn, initialValue) {
-        return Promise$_Reduce(this, fn, initialValue,
-                                USE_BOUND, this.reduce);
-    };
+Promise.prototype.reduce = function (fn, initialValue) {
+    return reduce(this, fn, initialValue, null);
+};
+
+Promise.reduce = function (promises, fn, initialValue, _each) {
+    return reduce(promises, fn, initialValue, _each);
+};
 };

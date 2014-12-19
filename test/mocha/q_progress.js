@@ -1,3 +1,4 @@
+"use strict";
 var assert = require("assert");
 
 var adapter = require("../../js/debug/bluebird.js");
@@ -6,9 +7,6 @@ var rejected = adapter.rejected;
 var pending = adapter.pending;
 
 var Promise = fulfilled().constructor;
-
-Promise.prototype.progress = Promise.prototype.progressed;
-
 
 var Q = function(p) {
     if( p.then ) return p;
@@ -275,7 +273,7 @@ describe("progress", function () {
         var progressed = false;
         var deferred = Q.defer();
 
-        deferred.promise.progress(function () {
+        deferred.promise.progressed(function () {
             progressed = true;
         });
 

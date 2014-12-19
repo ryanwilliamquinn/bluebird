@@ -1,3 +1,4 @@
+"use strict";
 /*
 Based on When.js tests
 
@@ -520,7 +521,7 @@ describe("when.defer-test", function () {
     specify("should return silently on progress when already rejected", function() {
         var d = when.defer();
         d.reject();
-
+        d.promise.caught(function(){});
         refute.defined(d.notify());
     });
 });

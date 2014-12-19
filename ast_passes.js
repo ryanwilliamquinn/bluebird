@@ -491,9 +491,14 @@ var astPasses = module.exports = {
                 if( callee.type === "Identifier" &&
                     callee.name === "ASSERT" ) {
                     if( node.arguments.length !== 1 ) {
-                        throw new Error( "Invalid amount of arguments to ASSERT" +
-                            src.substring(start, end)
-                        );
+                        results.push({
+                            start: start,
+                            end: end,
+                            toString: function() {
+                                return src.substring(start, end);
+                            }
+                        });
+                        return;
                     }
 
                     var expr = node.arguments[0];
@@ -523,17 +528,27 @@ var astPasses = module.exports = {
 
                 if( callee.type === "Identifier" &&
                     callee.name === "ASSERT" ) {
-                    if( node.arguments.length !== 1 ) {
-                        throw new Error( "Invalid amount of arguments to ASSERT" +
-                            src.substring(start, end)
-                        );
-                    }
                     var e = end + 1;
                     var s = start - 1;
 
                     while(rhorizontalws.test(src.charAt(s--)));
                     while(rlineterm.test(src.charAt(e++)));
                     results.push( new Empty( s + 2, e - 1) );
+                }
+            },
+            VariableDeclaration: function(node) {
+                var start = node.start;
+                var end = node.end;
+                if (node.kind === 'var' && node.declarations.length === 1) {
+                    var decl = node.declarations[0];
+                    if (decl.id.type === "Identifier" &&
+                        decl.id.name === "ASSERT") {
+                        var e = end + 1;
+                        var s = start - 1;
+                        while(rhorizontalws.test(src.charAt(s--)));
+                        while(rlineterm.test(src.charAt(e++)));
+                        results.push( new Empty( s + 2, e - 1) );
+                    }
                 }
             }
         });

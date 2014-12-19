@@ -7,19 +7,31 @@ Q.longStackSupport = true;
 
 module.exports = function( grunt ) {
     var isCI = !!grunt.option("ci");
+    var notAscii = /[^\u0019-\u007E]/;
 
+    function checkAscii(path, contents) {
+        contents.split("\n").forEach(function(line, i) {
+            if (notAscii.test(line)) {
+                var lineNo = i + 1;
+                var col = line.indexOf(RegExp.lastMatch) + 1;
+                var code = "U+" + (("0000" + line.charCodeAt(col-1)
+                                                    .toString(16)).slice(-4));
+                code = RegExp.lastMatch + " (" + code.toUpperCase() + ")";
+                throw new Error(path +":" + lineNo +":" + col +
+                        " Non-ASCII character: " + code);
+            }
+        });
+    }
 
     function getBrowsers() {
         //Terse format to generate the verbose format required by sauce
         var browsers = {
             "internet explorer|WIN8": ["10"],
             "internet explorer|WIN8.1": ["11"],
-            "firefox|Windows 7": ["3.5", "3.6", "4", "25"],
-            "firefox|WIN8.1": null,
+            "firefox|Windows 7": ["3.5", "4", "25"],
             "chrome|Windows 7": null,
             "safari|Windows 7": ["5"],
-            "iphone|OS X 10.8": ["6.0"],
-            "iphone|OS X 10.9": ["7"]
+            "iphone|OS X 10.8": ["6.0"]
         };
 
         var ret = [];
@@ -49,31 +61,28 @@ module.exports = function( grunt ) {
 
 
     var optionalModuleDependencyMap = {
-        "timers.js": ['Promise', 'INTERNAL'],
-        "any.js": ['Promise', 'Promise$_CreatePromiseArray', 'PromiseArray'],
-        "race.js": ['Promise', 'INTERNAL'],
+        "timers.js": ['Promise', 'INTERNAL', 'cast'],
+        "race.js": ['Promise', 'INTERNAL', 'cast'],
         "call_get.js": ['Promise'],
-        "filter.js": ['Promise', 'Promise$_CreatePromiseArray', 'PromiseArray', 'apiRejection'],
-        "generators.js": ['Promise', 'apiRejection', 'INTERNAL'],
-        "map.js": ['Promise', 'Promise$_CreatePromiseArray', 'PromiseArray', 'apiRejection'],
+        "generators.js": ['Promise', 'apiRejection', 'INTERNAL', 'cast'],
+        "map.js": ['Promise', 'PromiseArray', 'apiRejection', 'cast', 'INTERNAL'],
         "nodeify.js": ['Promise'],
         "promisify.js": ['Promise', 'INTERNAL'],
-        "props.js": ['Promise', 'PromiseArray'],
-        "reduce.js": ['Promise', 'Promise$_CreatePromiseArray', 'PromiseArray', 'apiRejection', 'INTERNAL'],
-        "settle.js": ['Promise', 'Promise$_CreatePromiseArray', 'PromiseArray'],
-        "some.js": ['Promise', 'Promise$_CreatePromiseArray', 'PromiseArray', 'apiRejection'],
-        "progress.js": ['Promise', 'isPromiseArrayProxy'],
+        "props.js": ['Promise', 'PromiseArray', 'cast'],
+        "reduce.js": ['Promise', 'PromiseArray', 'apiRejection', 'cast', 'INTERNAL'],
+        "settle.js": ['Promise', 'PromiseArray'],
+        "some.js": ['Promise', 'PromiseArray', 'apiRejection'],
+        "any.js": ['Promise', 'PromiseArray'],
+        "progress.js": ['Promise', 'PromiseArray'],
         "cancel.js": ['Promise', 'INTERNAL'],
-        "synchronous_inspection.js": ['Promise']
-
+        "filter.js": ['Promise', 'INTERNAL'],
+        "each.js": ['Promise', 'INTERNAL'],
+        "using.js": ['Promise', 'apiRejection', 'cast']
     };
 
     var optionalModuleRequireMap = {
-        "timers.js": true,
         "race.js": true,
-        "any.js": true,
         "call_get.js": true,
-        "filter.js": true,
         "generators.js": true,
         "map.js": true,
         "nodeify.js": true,
@@ -84,8 +93,11 @@ module.exports = function( grunt ) {
         "some.js": true,
         "progress.js": true,
         "cancel.js": true,
-        "synchronous_inspection.js": true
-
+        "using.js": true,
+        "filter.js": ["map.js"],
+        "any.js": ["some.js"],
+        "each.js": ["reduce.js"],
+        "timers.js": ["cancel.js"]
     };
 
     function getOptionalRequireCode( srcs ) {
@@ -150,7 +162,7 @@ module.exports = function( grunt ) {
                 if( index === 0 ) {
                     return " * @preserve " + line;
                 }
-                return " * " + line;
+                return " *" + (line ? " " + line : "");
             }).join("\n")
             preserved = "/**\n" + text + "\n */\n";
         }
@@ -181,11 +193,13 @@ module.exports = function( grunt ) {
             Error: true,
             args: true,
             INLINE_SLICE: false,
+            Promise: true,
+            WebKitMutationObserver: true,
             TypeError: true,
             RangeError: true,
             __DEBUG__: false,
             __BROWSER__: false,
-            process: false,
+            process: true,
             "console": false,
             "require": false,
             "module": false,
@@ -221,7 +235,6 @@ module.exports = function( grunt ) {
                 "undef": true,
                 "unused": true,
                 "strict": false,
-                "trailing": true,
                 "maxparams": 6,
                 "maxlen": 80,
 
@@ -239,7 +252,6 @@ module.exports = function( grunt ) {
                 "multistr": true,
                 "proto": false,
                 "scripturl": true,
-                "smarttabs": false,
                 "shadow": true,
                 "sub": true,
                 "supernew": false,
@@ -267,6 +279,7 @@ module.exports = function( grunt ) {
                     "./src/cancel.js",
                     "./src/any.js",
                     "./src/race.js",
+                    "./src/join.js",
                     "./src/call_get.js",
                     "./src/filter.js",
                     "./src/generators.js",
@@ -281,17 +294,14 @@ module.exports = function( grunt ) {
                     "./src/schedule.js",
                     "./src/queue.js",
                     "./src/errors.js",
+                    "./src/each.js",
                     "./src/captured_trace.js",
                     "./src/async.js",
                     "./src/catch_filter.js",
                     "./src/promise.js",
                     "./src/promise_array.js",
-                    "./src/settled_promise_array.js",
-                    "./src/some_promise_array.js",
-                    "./src/properties_promise_array.js",
-                    "./src/promise_inspection.js",
                     "./src/promise_resolver.js",
-                    "./src/promise_spawn.js"
+                    "./src/using.js"
                 ]
             }
         }
@@ -347,12 +357,9 @@ module.exports = function( grunt ) {
     grunt.loadNpmTasks("grunt-saucelabs");
     grunt.loadNpmTasks('grunt-contrib-jshint');
     grunt.loadNpmTasks('grunt-contrib-watch');
-    grunt.loadNpmTasks('grunt-contrib-concat');
 
     function runIndependentTest( file, cb , env) {
-        var fs = require("fs");
         var path = require("path");
-        var sys = require('sys');
         var spawn = require('child_process').spawn;
         var p = path.join(process.cwd(), "test");
 
@@ -364,6 +371,7 @@ module.exports = function( grunt ) {
             process.stderr
         ];
         var flags = node11 ? ["--harmony-generators"] : [];
+        flags.push("--allow-natives-syntax");
         if( file.indexOf( "mocha/") > -1 || file === "aplus.js" ) {
             var node = spawn(typeof node11 === "string" ? node11 : 'node',
                 flags.concat(["../mocharun.js", file]),
@@ -465,6 +473,13 @@ module.exports = function( grunt ) {
             return Q.nfcall(fs.readFile, dest, "utf8" );
         }).then(function( src ) {
             src = header + src;
+            var alias = "\
+            ;if (typeof window !== 'undefined' && window !== null) {           \
+                window.P = window.Promise;                                     \
+            } else if (typeof self !== 'undefined' && self !== null) {         \
+                self.P = self.Promise;                                         \
+            }";
+            src = src + alias;
             return Q.nfcall(fs.writeFile, dest, src );
         });
     }
@@ -479,19 +494,29 @@ module.exports = function( grunt ) {
 
     function getOptionalPathsFromOption( opt ) {
         opt = (opt + "").toLowerCase().split(/\s+/g);
-        return optionalPaths.filter(function(v){
+        var ret = optionalPaths.filter(function(v){
             v = v.replace("./src/", "").replace( ".js", "" ).toLowerCase();
             return opt.indexOf(v) > -1;
         });
+        var dependencies = {};
+        ret.forEach(function(v) {
+            v = v.replace("./src/", "").toLowerCase();
+            var dependencies = optionalModuleRequireMap[v];
+            if (Array.isArray(dependencies)) {
+                dependencies.forEach(function(dependency) {
+                    if (ret.indexOf(dependency) === -1) {
+                        ret.unshift('./src/' + dependency);
+                    }
+                });
+            }
+        });
+        return ret;
     }
 
     var optionalPaths = [
         "./src/timers.js",
-        "./src/synchronous_inspection.js",
-        "./src/any.js",
         "./src/race.js",
         "./src/call_get.js",
-        "./src/filter.js",
         "./src/generators.js",
         "./src/map.js",
         "./src/nodeify.js",
@@ -501,7 +526,11 @@ module.exports = function( grunt ) {
         "./src/settle.js",
         "./src/some.js",
         "./src/progress.js",
-        "./src/cancel.js"
+        "./src/cancel.js",
+        "./src/filter.js",
+        "./src/any.js",
+        "./src/each.js",
+        "./src/using.js"
     ];
 
     var mandatoryPaths = [
@@ -510,7 +539,6 @@ module.exports = function( grunt ) {
         "./src/bluebird.js",
         "./src/thenables.js",
         "./src/assert.js",
-        "./src/global.js",
         "./src/util.js",
         "./src/schedule.js",
         "./src/queue.js",
@@ -521,13 +549,10 @@ module.exports = function( grunt ) {
         "./src/catch_filter.js",
         "./src/promise.js",
         "./src/promise_array.js",
-        "./src/settled_promise_array.js",
-        "./src/some_promise_array.js",
-        "./src/properties_promise_array.js",
-        "./src/promise_inspection.js",
+        "./src/synchronous_inspection.js",
         "./src/promise_resolver.js",
-        "./src/promise_spawn.js",
-        "./src/direct_resolve.js"
+        "./src/direct_resolve.js",
+        "./src/join.js"
     ];
 
 
@@ -546,7 +571,11 @@ module.exports = function( grunt ) {
 
         var promises = [];
         var sources = paths.map(function(v){
-            var promise = Q.nfcall(fs.readFile, v, "utf8");
+            var promise = Q.nfcall(fs.readFile, v, "utf8")
+                            .then(function(contents) {
+                                checkAscii(v, contents);
+                                return contents;
+                            });
             promises.push(promise);
             var ret = {};
 
@@ -591,11 +620,10 @@ module.exports = function( grunt ) {
             file.contains("unhandled_rejections");
     }
 
-    function testRun( testOption ) {
+    function testRun( testOption, jobs ) {
         var fs = require("fs");
         var path = require("path");
         var done = this.async();
-        var adapter = global.adapter = require(BUILD_DEBUG_DEST);
 
         var totalTests = 0;
         var testsDone = 0;
@@ -662,11 +690,15 @@ module.exports = function( grunt ) {
             }, env);
         }
 
+        jobs = Math.min( files.length, jobs );
+        if (jobs === 1 || (jobs === 0 && slowTests.length === 1)) {
+            grunt.option("verbose", true);
+        }
+
         slowTests.forEach(runFile);
 
-        var maxParallelProcesses = 10;
-        var len = Math.min( files.length, maxParallelProcesses );
-        for( var i = 0; i < len; ++i ) {
+
+        for( var i = 0; i < jobs; ++i ) {
             runFile( files.shift() );
         }
     }
@@ -683,9 +715,21 @@ module.exports = function( grunt ) {
         build( paths, isCI ).then(function() {
             done();
         }).catch(function(e) {
+            function leftPad(count, num) {
+                  return (new Array(count + 1).join("0") + num).slice(-count)
+            }
             if( e.fileName && e.stack ) {
-                console.log(e.scriptSrc);
                 var stack = e.stack.split("\n");
+                var rLineNo = /\((\d+):(\d+)\)/;
+                var match = rLineNo.exec(stack[0]);
+                var lineNumber = parseInt(match[1], 10) - 1;
+                var columnNumber = parseInt(match[2], 10);
+                var padTo = (lineNumber + 5).toString().length;
+                var src = e.scriptSrc.split("\n").map(function(v, i) {
+                    return leftPad(padTo, (i + 1)) + "  " + v;
+                });
+                src = src.slice(lineNumber - 5, lineNumber + 5).join("\n") + "\n";
+                console.error(src);
                 stack[0] = stack[0] + " " + e.fileName;
                 console.error(stack.join("\n"));
                 if (!grunt.option("verbose")) {
@@ -697,12 +741,17 @@ module.exports = function( grunt ) {
                 console.error(e.stack);
             }
             done(false);
-        });
+        }).done();
     });
 
     grunt.registerTask( "testrun", function(){
         var testOption = grunt.option("run");
         var node11path = grunt.option("node11");
+        var jobs = parseInt(grunt.option("jobs"), 10);
+
+        if (!isFinite(jobs) || jobs < 1) {
+            jobs = 10;
+        }
 
         if (typeof node11path === "string" && node11path) {
             node11 = node11path;
@@ -715,7 +764,7 @@ module.exports = function( grunt ) {
                 .replace( /\.js$/, "" )
                 .replace( /[^a-zA-Z0-9_-]/g, "" );
         }
-        testRun.call( this, testOption );
+        testRun.call( this, testOption, jobs );
     });
 
     grunt.registerTask( "test", ["jshint", "build", "testrun"] );

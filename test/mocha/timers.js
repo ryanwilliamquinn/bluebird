@@ -1,11 +1,12 @@
+"use strict";
 var assert = require("assert");
-
 var adapter = require("../../js/debug/bluebird.js");
 var fulfilled = adapter.fulfilled;
 var rejected = adapter.rejected;
 var pending = adapter.pending;
 var Promise = adapter;
 var Q = Promise;
+var globalObject = typeof window !== "undefined" ? window : new Function("return this;")();
 /*
 Copyright 2009–2012 Kristopher Michael Kowal. All rights reserved.
 Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -66,10 +67,12 @@ describe("timeout", function () {
             progressValsSeen.push(progressVal);
         });
 
-        Q.delay(5).then(function () { deferred.progress(1); });
-        Q.delay(15).then(function () { deferred.progress(2); });
-        Q.delay(25).then(function () { deferred.progress(3); });
-        Q.delay(35).then(function () { deferred.resolve(); });
+        Q.resolve().then(function(){
+            deferred.progress(1);
+            deferred.progress(2);
+            deferred.progress(3);
+            deferred.resolve();
+        });
     });
 
     it("should reject with a custom timeout error if the promise is too slow and msg was provided", function (done) {
@@ -77,6 +80,48 @@ describe("timeout", function () {
         .timeout(10, "custom")
         .caught(Promise.TimeoutError, function(e){
             assert(/custom/i.test(e.message));
+            done();
+        });
+    });
+
+    it("should propagate the timeout error to cancellable parents", function(done) {
+        function doExpensiveOp() {
+            return new Promise(function() {
+
+            })
+            .cancellable()
+            .caught(Promise.TimeoutError, function(e) {
+                done();
+            })
+        }
+
+        doExpensiveOp().timeout(100);
+    });
+
+    it("should clear timeouts when success", function(done) {
+        var old = globalObject.clearTimeout;
+        var handleSet = false;
+        globalObject.clearTimeout = function(handle) {
+            handleSet = true;
+            globalObject.clearTimeout = old;
+        };
+
+        Q.delay(10).timeout(100).then(function() {
+            assert(handleSet);
+            done();
+        });
+    });
+
+    it("should clear timeouts when fail", function(done) {
+        var old = globalObject.clearTimeout;
+        var handleSet = false;
+        globalObject.clearTimeout = function(handle) {
+            handleSet = true;
+            globalObject.clearTimeout = old;
+        };
+
+        Q.delay(100).timeout(10).then(null, function() {
+            assert(handleSet);
             done();
         });
     });
@@ -97,6 +142,8 @@ describe("delay", function () {
 
     it("should not delay rejection", function (done) {
         var promise = Q.reject(5).delay(50);
+
+        promise.caught(function(){});
 
         Q.delay(20).then(function () {
             assert(!promise.isPending());

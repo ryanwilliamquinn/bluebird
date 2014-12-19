@@ -30,6 +30,10 @@ function delay() {
     });
 }
 
+Promise.coroutine.addYieldHandler(function(yieldedValue) {
+    if (Array.isArray(yieldedValue)) return Promise.all(yieldedValue);
+});
+
 var error = new Error("asd");
 
 describe("yielding", function() {
@@ -411,6 +415,21 @@ describe("custom yield handlers", function(){
             return yield thunk(4);
         })().then(function(result) {
             assert(result === 16);
+            done();
+        });
+    });
+
+    specify("individual yield handler", function(done) {
+        var dummy = {};
+        var yieldHandler = function(value) {
+            if (value === dummy) return Promise.resolve(3);
+        };
+        var coro = Promise.coroutine(function* () {
+            return yield dummy;
+        }, {yieldHandler: yieldHandler});
+
+        coro().then(function(result) {
+            assert(result === 3);
             done();
         });
     });

@@ -7,7 +7,7 @@ var fulfilled = adapter.fulfilled;
 var rejected = adapter.rejected;
 var pending = adapter.pending;
 var Promise = adapter;
-var RejectionError = Promise.RejectionError;
+var OperationalError = Promise.OperationalError;
 
 var erroneusNode = function(a, b, c, cb) {
     setTimeout(function(){
@@ -16,7 +16,7 @@ var erroneusNode = function(a, b, c, cb) {
 };
 
 var sentinel = {};
-var sentinelError = new RejectionError();
+var sentinelError = new OperationalError();
 
 var successNode = function(a, b, c, cb) {
     setTimeout(function(){
@@ -44,7 +44,7 @@ var syncSuccessNodeMultipleValues = function(a, b, c, cb) {
 
 var errToThrow;
 var thrower = Promise.promisify(function(a, b, c, cb) {
-    errToThrow = new RejectionError();
+    errToThrow = new OperationalError();
     throw errToThrow;
 });
 
@@ -344,7 +344,7 @@ describe("promisify on objects", function(){
         });
     });
 
-    specify( "promisify Async suffixed methods", function( done ) {
+    specify( "Fails to promisify Async suffixed methods", function( done ) {
         var o = {
             x: function(cb){
                 cb(null, 13);
@@ -357,37 +357,126 @@ describe("promisify on objects", function(){
                 cb(null, 13)
             }
         };
-
-        Promise.promisifyAll(o);
-        var b = {};
-        var hasProp = {}.hasOwnProperty;
-        for( var key in o ) {
-            if( hasProp.call(o, key ) ) {
-                b[key] = o[key];
-            }
+        try {
+            Promise.promisifyAll(o);
         }
-        Promise.promisifyAll(o);
-        assert.deepEqual(b, o);
+        catch (e) {
+            assert(e instanceof Promise.TypeError);
+            done();
+        }
+    });
 
-        o.xAsync()
-        .then(function(v){
-            assert( v === 13 );
-            return o.xAsyncAsync();
-        })
-        .then(function(v){
-            assert( v === 13 );
-            return o.xAsyncAsyncAsync();
-        })
-        .then(function(v){
-            assert( v === 13 );
+    specify("Calls overridden methods", function(done) {
+        function Model() {
+            this.save = function() {
+                done();
+            };
+        }
+        Model.prototype.save = function() {
+            throw new Error("");
+        };
+
+        Promise.promisifyAll(Model.prototype);
+        var model = new Model();
+        model.saveAsync();
+    });
+
+    specify("gh-232", function(done) {
+        function f() {
+            var args = [].slice.call(arguments, 0, -1);
+            assert.deepEqual(args, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+            var cb = [].slice.call(arguments, -1)[0];
+            cb(null, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10);
+        }
+        var fAsync = Promise.promisify(f);
+        fAsync(1, 2, 3, 4, 5, 6, 7, 8, 9, 10).then(function(result) {
+            assert.deepEqual(result, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
             done();
         });
-
-
-
     });
+
+
+    specify("gh335", function(done) {
+        function HasArgs() { }
+        HasArgs.prototype.args = function(cb) {
+            return cb(null, "ok");
+        };
+
+        Promise.promisifyAll(HasArgs.prototype);
+        var a = new HasArgs();
+        a.argsAsync().then(function(res) {
+            assert.equal(res, "ok");
+            done();
+        });
+    });
+    
 });
 
+describe( "Promisify with custom suffix", function() {
+    it("should define methods with the custom suffix", function(done) {
+        function Test() {
+
+        }
+
+        Test.prototype.method = function method() {};
+
+        Promise.promisifyAll(Test.prototype, {suffix: "$P"});
+        assert(typeof Test.prototype.method$P == "function");
+        done();
+    });
+
+    it("should throw on invalid suffix", function(done) {
+        try {
+            Promise.promisifyAll({}, {suffix: ""});
+        }
+        catch(e) {
+            done();
+        }
+    });
+})
+
+describe("Module promisification", function() {
+    it("should promisify module with direct property classes", function(done) {
+        function RedisClient() {}
+        RedisClient.prototype.query = function() {};
+        function Multi() {}
+        Multi.prototype.exec = function() {};
+        Multi.staticMethod = function() {}
+
+        var redis = {
+            RedisClient: RedisClient,
+            Multi: Multi,
+            moduleMethod: function() {}
+        };
+        redis.Multi.staticMethod.tooDeep = function() {};
+
+        Promise.promisifyAll(redis);
+
+        assert(typeof redis.moduleMethodAsync === "function");
+        assert(typeof redis.Multi.staticMethodAsync === "function");
+        assert(typeof redis.Multi.prototype.execAsync === "function");
+        assert(typeof redis.RedisClient.prototype.queryAsync === "function");
+        assert(typeof redis.Multi.staticMethod.tooDeepAsync === "undefined");
+        done();
+    })
+
+    it("should promisify module with inherited property classes", function(done) {
+        function Mongoose() {}
+        var Model = Mongoose.prototype.Model = function() {};
+        Model.prototype.find = function() {};
+        var Document = Mongoose.prototype.Document = function() {};
+        Document.prototype.create = function() {};
+        Document.staticMethod = function() {};
+        var mongoose = new Mongoose();
+
+        Promise.promisifyAll(mongoose);
+
+        assert(typeof mongoose.Model.prototype.findAsync === "function");
+        assert(typeof mongoose.Document.prototype.createAsync === "function");
+        assert(typeof mongoose.Document.staticMethodAsync === "function")
+        done();
+    })
+})
 
 describe( "Promisify from prototype to object", function() {
     var getterCalled = 0;
@@ -403,6 +492,8 @@ describe( "Promisify from prototype to object", function() {
         method.test = function() {
 
         };
+
+        method["---invalid---"] = function(){};
 
         if ((function(){"use strict"; return this === void 0})()) {
             Object.defineProperty(method, "thrower", {
@@ -438,7 +529,6 @@ describe( "Promisify from prototype to object", function() {
         var origKeys = Object.getOwnPropertyNames(Test.prototype).sort();
         var a = new Test();
         Promise.promisifyAll(a);
-
 
         assert( typeof a.testAsync === "function" );
         assert( a.hasOwnProperty("testAsync"));
@@ -487,7 +577,7 @@ describe( "Promisify from prototype to object", function() {
         Promise.promisifyAll(instance);
 
         assert.deepEqual( Object.getOwnPropertyNames(Test.prototype).sort(), origKeys );
-        assert( instance.test__beforePromisified__ === instance.test );
+        assert(instance.test === instance.test);
         assert(getterCalled === 0);
         done();
     });
@@ -561,7 +651,54 @@ if( Promise.hasLongStackTraces() ) {
     });
 }
 
-describe("RejectionError wrapping", function() {
+describe("Custom promisifier", function() {
+    var dummy = {};
+    var err = new Error();
+    var chrome = {
+        getTab: function(tabId, callback) {
+            setTimeout(function() {
+                callback(dummy);
+            }, 1);
+        },
+        getTabErroneous: function(tabId, callback, errback) {
+            setTimeout(function() {
+                errback(err);
+            }, 1);
+        }
+    };
+
+    Promise.promisifyAll(chrome, {
+        promisifier: function(originalMethod) {
+            return function() {
+                var self = this;
+                var args = [].slice.call(arguments);
+                return new Promise(function(f, r) {
+                    args.push(f, r);
+                    originalMethod.apply(self, args);
+                });
+            };
+        }
+    });
+
+    specify("getTab", function(done) {
+        chrome.getTabAsync(1).then(function(result) {
+            assert.equal(dummy, result);
+            done();
+        });
+    });
+
+    specify("getTabErroneous", function(done) {
+        chrome.getTabErroneousAsync(2).caught(function(e) {
+            assert.equal(e, err);
+            done();
+        });
+    });
+
+
+
+});
+
+describe("OperationalError wrapping", function() {
 
     var CustomError = function(){
 
@@ -616,14 +753,14 @@ describe("RejectionError wrapping", function() {
 
     specify("should wrap stringback", function(done) {
         stringback().error(function(e) {
-            assert(e instanceof RejectionError);
+            assert(e instanceof OperationalError);
             done();
         });
     });
 
     specify("should wrap errback", function(done) {
         errback().error(function(e) {
-            assert(e instanceof RejectionError);
+            assert(e instanceof OperationalError);
             done();
         });
     });

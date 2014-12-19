@@ -1,100 +1,89 @@
 "use strict";
-
-var global = require("./global.js");
-var setTimeout = function(fn, time) {
-    INLINE_SLICE(args, arguments, 2);
-    global.setTimeout(function() {
-        fn.apply(void 0, args);
-    }, time);
+var ASSERT = require("./assert.js");
+var _setTimeout = function(fn, ms) {
+    var len = arguments.length;
+    ASSERT(4 <= len && len <= 5);
+    var arg0 = arguments[2];
+    var arg1 = arguments[3];
+    var arg2 = len >= 5 ? arguments[4] : undefined;
+    return setTimeout(function() {
+        fn(arg0, arg1, arg2);
+    }, ms|0);
 };
 
-//Feature detect set timeout that passes arguments.
-//
-//Because it cannot be done synchronously
-//the setTimeout defaults to shim and later on
-//will start using the faster (can be used without creating closures) one
-//if available (i.e. not <=IE8)
-var pass = {};
-global.setTimeout( function(_) {
-    if(_ === pass) {
-        setTimeout = global.setTimeout;
+module.exports = function(Promise, INTERNAL, cast) {
+var util = require("./util.js");
+var errors = require("./errors.js");
+var apiRejection = require("./errors_api_rejection")(Promise);
+var TimeoutError = Promise.TimeoutError;
+
+var afterTimeout = function (promise, message, ms) {
+    //Don't waste time concatting strings or creating stack traces
+    if (!promise.isPending()) return;
+    if (typeof message !== "string") {
+        message = TIMEOUT_ERROR + " " + ms + " ms"
     }
-}, 1, pass);
+    var err = new TimeoutError(message);
+    errors.markAsOriginatingFromRejection(err);
+    promise._attachExtraTrace(err);
+    promise._cancel(err);
+};
 
-module.exports = function(Promise, INTERNAL) {
-    var util = require("./util.js");
-    var ASSERT = require("./assert.js");
-    var errors = require("./errors.js");
-    var apiRejection = require("./errors_api_rejection")(Promise);
-    var TimeoutError = Promise.TimeoutError;
+var afterDelay = function (value, promise) {
+    promise._fulfill(value);
+};
 
-    var afterTimeout = function Promise$_afterTimeout(promise, message, ms) {
-        //Don't waste time concatting strings or creating stack traces
-        if (!promise.isPending()) return;
-        if (typeof message !== "string") {
-            message = TIMEOUT_ERROR + " " + ms + " ms"
-        }
-        var err = new TimeoutError(message);
-        errors.markAsOriginatingFromRejection(err);
-        promise._attachExtraTrace(err);
-        promise._rejectUnchecked(err);
-    };
+var delay = Promise.delay = function (value, ms) {
+    if (ms === undefined) {
+        ms = value;
+        value = undefined;
+    }
+    ms = +ms;
+    var maybePromise = cast(value, undefined);
+    var promise = new Promise(INTERNAL);
 
-    var afterDelay = function Promise$_afterDelay(value, promise) {
-        promise._fulfill(value);
-    };
+    if (maybePromise instanceof Promise) {
+        promise._propagateFrom(maybePromise, PROPAGATE_ALL);
+        promise._follow(maybePromise);
+        return promise.then(function(value) {
+            return Promise.delay(value, ms);
+        });
+    } else {
+        promise._setTrace(undefined);
+        _setTimeout(afterDelay, ms, value, promise);
+    }
+    return promise;
+};
 
-    Promise.delay = function Promise$Delay(value, ms, caller) {
-        if (ms === void 0) {
-            ms = value;
-            value = void 0;
-        }
-        ms = +ms;
-        if (typeof caller !== "function") {
-            caller = Promise.delay;
-        }
-        var maybePromise = Promise._cast(value, caller, void 0);
-        var promise = new Promise(INTERNAL);
+Promise.prototype.delay = function (ms) {
+    return delay(this, ms);
+};
 
-        if (Promise.is(maybePromise)) {
-            if (maybePromise._isBound()) {
-                promise._setBoundTo(maybePromise._boundTo);
-            }
-            if (maybePromise._cancellable()) {
-                promise._setCancellable();
-                promise._cancellationParent = maybePromise;
-            }
-            promise._setTrace(caller, maybePromise);
-            promise._follow(maybePromise);
-            return promise.then(function(value) {
-                return Promise.delay(value, ms);
-            });
-        }
-        else {
-            promise._setTrace(caller, void 0);
-            setTimeout(afterDelay, ms, value, promise);
-        }
-        return promise;
-    };
+function successClear(value) {
+    var handle = this;
+    // Deal with non-strict mode wrapping.
+    if (handle instanceof Number) handle = +handle;
+    clearTimeout(handle);
+    return value;
+}
 
-    Promise.prototype.delay = function Promise$delay(ms) {
-        return Promise.delay(this, ms, this.delay);
-    };
+function failureClear(reason) {
+    var handle = this;
+    // Deal with non-strict mode wrapping.
+    if (handle instanceof Number) handle = +handle;
+    clearTimeout(handle);
+    throw reason;
+}
 
-    Promise.prototype.timeout = function Promise$timeout(ms, message) {
-        ms = +ms;
+Promise.prototype.timeout = function (ms, message) {
+    ms = +ms;
 
-        var ret = new Promise(INTERNAL);
-        ret._setTrace(this.timeout, this);
-
-        if (this._isBound()) ret._setBoundTo(this._boundTo);
-        if (this._cancellable()) {
-            ret._setCancellable();
-            ret._cancellationParent = this;
-        }
-        ret._follow(this);
-        setTimeout(afterTimeout, ms, ret, message, ms);
-        return ret;
-    };
+    var ret = new Promise(INTERNAL);
+    ret._propagateFrom(this, PROPAGATE_ALL);
+    ret._follow(this);
+    var handle = _setTimeout(afterTimeout, ms, ret, message, ms);
+    return ret.cancellable()
+              ._then(successClear, failureClear, undefined, handle, undefined);
+};
 
 };

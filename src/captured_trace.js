@@ -3,18 +3,8 @@ module.exports = function() {
 var ASSERT = require("./assert.js");
 var inherits = require("./util.js").inherits;
 var defineProperty = require("./es5.js").defineProperty;
-
-var rignore = new RegExp(
-    "\\b(?:[\\w.]*Promise(?:Array|Spawn)?\\$_\\w+|" +
-    "tryCatch(?:1|2|Apply)|new \\w*PromiseArray|" +
-    "\\w*PromiseArray\\.\\w*PromiseArray|" +
-    "setTimeout|CatchFilter\\$_\\w+|makeNodePromisified|processImmediate|" +
-    "process._tickCallback|nextTick|Async\\$\\w+)\\b"
-);
-
 var rtraceline = null;
 var formatStack = null;
-var areNamesMangled = false;
 
 function formatNonError(obj) {
     var str;
@@ -22,8 +12,7 @@ function formatNonError(obj) {
         str = "[function " +
             (obj.name || "anonymous") +
             "]";
-    }
-    else {
+    } else {
         str = obj.toString();
         var ruselessToString = /\[object [a-zA-Z0-9$_]+\]/;
         if (ruselessToString.test(str)) {
@@ -51,59 +40,59 @@ function snip(str) {
 }
 
 function CapturedTrace(ignoreUntil, isTopLevel) {
-    ASSERT(typeof ignoreUntil === "function");
-    if (!areNamesMangled) {
-        ASSERT(typeof ignoreUntil.name === "string");
-        //Polyfills for V8's stacktrace API work on strings
-        //instead of function identities so the function must have
-        //an unique name
-        ASSERT(ignoreUntil.name.length > 0);
-    }
-    this.captureStackTrace(ignoreUntil, isTopLevel);
+    this.captureStackTrace(CapturedTrace, isTopLevel);
 
 }
 inherits(CapturedTrace, Error);
 
-CapturedTrace.prototype.captureStackTrace =
-function CapturedTrace$captureStackTrace(ignoreUntil, isTopLevel) {
+CapturedTrace.prototype.captureStackTrace = function (ignoreUntil, isTopLevel) {
     captureStackTrace(this, ignoreUntil, isTopLevel);
 };
 
-CapturedTrace.possiblyUnhandledRejection =
-function CapturedTrace$PossiblyUnhandledRejection(reason) {
+function formatAndLogError(error, title) {
     if (typeof console === "object") {
         var message;
-        if (typeof reason === "object" || typeof reason === "function") {
-            var stack = reason.stack;
-            message = "Possibly unhandled " + formatStack(stack, reason);
+        if (typeof error === "object" || typeof error === "function") {
+            var stack = error.stack;
+            message = title + formatStack(stack, error);
+        } else {
+            message = title + String(error);
         }
-        else {
-            message = "Possibly unhandled " + String(reason);
-        }
-        if (typeof console.error === "function" ||
-            typeof console.error === "object") {
-            console.error(message);
-        }
-        else if (typeof console.log === "function" ||
-            typeof console.error === "object") {
+        if (typeof console.warn === "function" ||
+            typeof console.warn === "object") {
+            console.warn(message);
+        } else if (typeof console.log === "function" ||
+            typeof console.log === "object") {
             console.log(message);
         }
     }
+}
+CapturedTrace.unhandledRejection = function (reason) {
+    formatAndLogError(reason, "^--- With additional stack trace: ");
 };
 
-areNamesMangled = CapturedTrace.prototype.captureStackTrace.name !==
-    "CapturedTrace$captureStackTrace";
+CapturedTrace.possiblyUnhandledRejection = function (reason) {
+    formatAndLogError(reason, "Possibly unhandled ");
+};
 
-CapturedTrace.combine = function CapturedTrace$Combine(current, prev) {
-    var curLast = current.length - 1;
+CapturedTrace.combine = function (current, prev) {
+    var currentLastIndex = current.length - 1;
+    var currentLastLine = current[currentLastIndex];
+    var commonRootMeetPoint = -1;
     //Eliminate common roots
     for (var i = prev.length - 1; i >= 0; --i) {
-        var line = prev[i];
-        if (current[curLast] === line) {
-            current.pop();
-            curLast--;
+        if (prev[i] === currentLastLine) {
+            commonRootMeetPoint = i;
+            break;
         }
-        else {
+    }
+
+    for (var i = commonRootMeetPoint; i >= 0; --i) {
+        var line = prev[i];
+        if (current[currentLastIndex] === line) {
+            current.pop();
+            currentLastIndex--;
+        } else {
             break;
         }
     }
@@ -113,12 +102,11 @@ CapturedTrace.combine = function CapturedTrace$Combine(current, prev) {
 
     var ret = [];
 
-
     //Eliminate library internal stuff and async callers
     //that nobody cares about
-    for (var i = 0, len = lines.length; i < len; ++i) {
 
-        if ((rignore.test(lines[i]) ||
+    for (var i = 0, len = lines.length; i < len; ++i) {
+        if (((rtraceline.test(lines[i]) && shouldIgnore(lines[i])) ||
             (i > 0 && !rtraceline.test(lines[i])) &&
             lines[i] !== FROM_PREVIOUS_EVENT)
        ) {
@@ -129,8 +117,78 @@ CapturedTrace.combine = function CapturedTrace$Combine(current, prev) {
     return ret;
 };
 
-CapturedTrace.isSupported = function CapturedTrace$IsSupported() {
+CapturedTrace.protectErrorMessageNewlines = function(stack) {
+    for (var i = 0; i < stack.length; ++i) {
+        if (rtraceline.test(stack[i])) {
+            break;
+        }
+    }
+
+    // No multiline error message
+    if (i <= 1) return;
+
+    var errorMessageLines = [];
+    for (var j = 0; j < i; ++j) {
+        errorMessageLines.push(stack.shift());
+    }
+    stack.unshift(errorMessageLines.join(NEWLINE_PROTECTOR));
+};
+
+CapturedTrace.isSupported = function () {
     return typeof captureStackTrace === "function";
+};
+
+// For filtering out internal calls from stack traces
+var shouldIgnore = function() { return false; };
+var parseLineInfoRegex = /[\/<\(]([^:\/]+):(\d+):(?:\d+)\)?\s*$/;
+function parseLineInfo(line) {
+    var matches = line.match(parseLineInfoRegex);
+    if (matches) {
+        return {
+            fileName: matches[1],
+            line: parseInt(matches[2], 10)
+        };
+    }
+}
+CapturedTrace.setBounds = function(firstLineError, lastLineError) {
+    if (!CapturedTrace.isSupported()) return;
+    var firstStackLines = firstLineError.stack.split("\n");
+    var lastStackLines = lastLineError.stack.split("\n");
+    var firstIndex = -1;
+    var lastIndex = -1;
+    var firstFileName;
+    var lastFileName;
+    for (var i = 0; i < firstStackLines.length; ++i) {
+        var result = parseLineInfo(firstStackLines[i]);
+        if (result) {
+            firstFileName = result.fileName;
+            firstIndex = result.line;
+            break;
+        }
+    }
+    for (var i = 0; i < lastStackLines.length; ++i) {
+        var result = parseLineInfo(lastStackLines[i]);
+        if (result) {
+            lastFileName = result.fileName;
+            lastIndex = result.line;
+            break;
+        }
+    }
+    if (firstIndex < 0 || lastIndex < 0 || !firstFileName || !lastFileName ||
+        firstFileName !== lastFileName || firstIndex >= lastIndex) {
+        return;
+    }
+
+    shouldIgnore = function(line) {
+        var info = parseLineInfo(line);
+        if (info) {
+            if (info.fileName === firstFileName &&
+                (firstIndex <= info.line && info.line <= lastIndex)) {
+                return true;
+            }
+        }
+        return false;
+    };
 };
 
 var captureStackTrace = (function stackDetection() {
@@ -143,8 +201,8 @@ var captureStackTrace = (function stackDetection() {
 
             if (typeof stack === "string") return stack;
 
-            if (error.name !== void 0 &&
-                error.message !== void 0) {
+            if (error.name !== undefined &&
+                error.message !== undefined) {
                 return error.name + ". " + error.message;
             }
             return formatNonError(error);
@@ -152,6 +210,11 @@ var captureStackTrace = (function stackDetection() {
 
         };
         var captureStackTrace = Error.captureStackTrace;
+        var bluebirdRegexp = /[\\\/]bluebird[\\\/]js[\\\/](main|debug|zalgo)/;
+        // For node
+        shouldIgnore = function(line) {
+            return bluebirdRegexp.test(line);
+        };
         return function CapturedTrace$_captureStackTrace(
             receiver, ignoreUntil) {
             captureStackTrace(receiver, ignoreUntil);
@@ -160,8 +223,7 @@ var captureStackTrace = (function stackDetection() {
     var err = new Error();
 
     //SpiderMonkey
-    //Relies on .name strings which must not be mangled
-    if (!areNamesMangled && typeof err.stack === "string" &&
+    if (typeof err.stack === "string" &&
         typeof "".startsWith === "function" &&
         (err.stack.startsWith("stackDetection@")) &&
         stackDetection.name === "stackDetection") {
@@ -182,28 +244,19 @@ var captureStackTrace = (function stackDetection() {
                 return (error.name + ". " + error.message + "\n" + stack);
             }
 
-            if (error.name !== void 0 &&
-                error.message !== void 0) {
+            if (error.name !== undefined &&
+                error.message !== undefined) {
                 return error.name + ". " + error.message;
             }
             return formatNonError(error);
         };
 
-        return function captureStackTrace(o, fn) {
-            var name = fn.name;
+        return function captureStackTrace(o) {
             var stack = new Error().stack;
             var split = stack.split(rline);
-            var i, len = split.length;
-            for (i = 0; i < len; i += 2) {
-                if (split[i] === name) {
-                    break;
-                }
-            }
-            ASSERT(i + 2 < split.length);
-            split = split.slice(i + 2);
-            len = split.length - 2;
+            var len = split.length;
             var ret = "";
-            for (i = 0; i < len; i += 2) {
+            for (var i = 0; i < len; i += 2) {
                 ret += split[i];
                 ret += "@";
                 ret += split[i + 1];
@@ -211,15 +264,14 @@ var captureStackTrace = (function stackDetection() {
             }
             o.stack = ret;
         };
-    }
-    else {
+    } else {
         formatStack = function(stack, error) {
             if (typeof stack === "string") return stack;
 
             if ((typeof error === "object" ||
                 typeof error === "function") &&
-                error.name !== void 0 &&
-                error.message !== void 0) {
+                error.name !== undefined &&
+                error.message !== undefined) {
                 return error.name + ". " + error.message;
             }
             return formatNonError(error);

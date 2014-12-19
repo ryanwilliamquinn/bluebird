@@ -549,6 +549,34 @@ describe("immediate failures with .then", function testFunction(done) {
         Promise.all([Promise.reject("err")])
             .caught(clearUnhandledHandler(async(done)));
     });
+
+
+    specify("Promise.all many", function testFunction(done) {
+        onUnhandledFail(isStrictModeSupported ? testFunction : arguments.callee);
+
+        Promise.all([Promise.reject("err"), Promise.reject("err2")])
+            .caught(clearUnhandledHandler(async(done)));
+    });
+
+    specify("Promise.all many pending", function testFunction(done) {
+        onUnhandledFail(isStrictModeSupported ? testFunction : arguments.callee);
+
+        var a = new Promise(function(v, w){
+            setTimeout(function(){w("err");}, 4);
+        });
+        var b = new Promise(function(v, w){
+            setTimeout(function(){w("err2");}, 4);
+        });
+
+        Promise.all([a, b])
+            .caught(clearUnhandledHandler(async(done)));
+    });
+
+    specify("Already rejected promise for a collection", function testFunction(done){
+        onUnhandledFail(isStrictModeSupported ? testFunction : arguments.callee);
+        Promise.settle(Promise.reject(err))
+            .caught(clearUnhandledHandler(async(done)));
+    });
 });
 
 describe("gh-118", function() {
@@ -580,6 +608,38 @@ describe("gh-118", function() {
                 reject(13);
             });
         }).caught(async(clearUnhandledHandler(done)));
+    });
+});
+
+describe("Promise.onUnhandledRejectionHandled", function() {
+    specify("should be called when unhandled promise is later handled", function(done) {
+        var unhandledPromises = [];
+        Promise.onPossiblyUnhandledRejection(function(reason, promise) {
+            unhandledPromises.push({
+                reason: reason,
+                promise: promise
+            });
+        });
+
+        Promise.onUnhandledRejectionHandled(function(promise) {
+            assert.equal(unhandledPromises.length, 1);
+            assert(unhandledPromises[0].promise === promise);
+            assert(promise === a);
+            assert(unhandledPromises[0].reason === reason);
+            Promise.onUnhandledRejectionHandled(null);
+            Promise.onPossiblyUnhandledRejection(null);
+            done();
+        });
+
+        var reason = new Error("error");
+        var a = new Promise(function(){
+            throw reason;
+        });
+        setTimeout(function(){
+            a.caught(function(){
+
+            });
+        }, 25);
     });
 });
 

@@ -1,3 +1,4 @@
+"use strict";
 var assert = require("assert");
 
 var adapter = require("../../js/debug/bluebird.js");
@@ -6,9 +7,6 @@ var rejected = adapter.rejected;
 var pending = adapter.pending;
 
 var Promise = fulfilled().constructor;
-
-Promise.prototype.progress = Promise.prototype.progressed;
-
 
 var Q = function(p) {
     if( p.then ) return p;
@@ -152,8 +150,6 @@ describe("spread", function () {
 
     it("calls the errback when given a rejected promise", function (done) {
         var err = new Error();
-        var abc = [fulfilled(10), rejected(err)];
-
         adapter.all([fulfilled(10), rejected(err)]).spread(assert.fail,
             function(actual){
             assert( actual === err );
@@ -289,4 +285,15 @@ describe("spread", function () {
         })
     });
 
+    specify("gh-235", function(done) {
+        var P = Promise;
+        P.resolve(1).then(function(x) {
+          return [x, P.resolve(2)]
+        }).spread(function(x, y) {
+          return P.all([P.resolve(3), P.resolve(4)]);
+        }).then(function(a) {
+          assert.deepEqual([3, 4], a);
+          done();
+        });
+    })
 });

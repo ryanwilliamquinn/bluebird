@@ -1,3 +1,4 @@
+"use strict";
 /*
 Based on When.js tests
 
@@ -114,16 +115,14 @@ function isSubset(subset, superset) {
     return true;
 }
 
+var RangeError = when.RangeError;
+
 describe("when.some-test", function () {
 
-    specify("should resolve empty input", function(done) {
-        when.some([], 1).then(
-            function(result) {
-                assert.deepEqual(result, []);
-                done();
-            },
-            fail
-        )
+    specify("should reject empty input", function(done) {
+        when.some([], 1).caught(RangeError, function() {
+            done();
+        });
     });
 
     specify("should resolve values array", function(done) {
@@ -148,11 +147,11 @@ describe("when.some-test", function () {
         )
     });
 
-    specify("should resolve sparse array input", function(done) {
+    specify("should not resolve sparse array input", function(done) {
         var input = [, 1, , 2, 3 ];
         when.some(input, 2).then(
             function(results) {
-                assert(isSubset(results, [1,2,3]));
+                assert.deepEqual(results, [void 0, 1]);
                 done();
             },
             function() {
@@ -176,6 +175,32 @@ describe("when.some-test", function () {
         )
     });
 
+    specify("should reject with aggregateError", function(done) {
+        var input = [resolved(1), rejected(2), rejected(3)];
+        var AggregateError = when.AggregateError;
+        when.some(input, 2)
+            .then(fail)
+            .caught(AggregateError, function(e) {
+                assert(e[0] === 2);
+                assert(e[1] === 3);
+                assert(e.length === 2);
+                done();
+            });
+    });
+
+    specify("aggregate error should be caught in .error", function(done) {
+        var input = [resolved(1), rejected(2), rejected(3)];
+        var AggregateError = when.AggregateError;
+        when.some(input, 2)
+            .then(fail)
+            .error(function(e) {
+                assert(e[0] === 2);
+                assert(e[1] === 3);
+                assert(e.length === 2);
+                done();
+            });
+    });
+
     specify("should accept a promise for an array", function(done) {
         var expected, input;
 
@@ -195,31 +220,5 @@ describe("when.some-test", function () {
         when.some(resolved(1), 1).caught(TypeError, function(e){
             done();
         });
-    });
-
-    specify("should give sparse rejection reasons", function(done) {
-        var d1 = when.defer();
-        var d2 = when.defer();
-        var d3 = when.defer();
-
-
-        var arr = [,,,,d1.promise, d2.promise, d3.promise];
-
-        when.some(arr, 2).then(assert.fail, function(rejectionReasons){
-            //Should be apparent after 2 rejections that
-            //it could never be fulfilled
-
-            //Cannot use deep equality in IE8 because non-enumerable properties are not
-            //supported
-            assert(rejectionReasons[0] === 1);
-            assert(rejectionReasons[1] === 2);
-            done();
-        });
-
-        setTimeout(function(){
-            d1.reject(1);
-            d2.reject(2);
-            d3.reject(3);
-        }, 13);
     });
 });

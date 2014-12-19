@@ -1,3 +1,4 @@
+"use strict";
 var assert = require("assert");
 
 var adapter = require("../../js/debug/bluebird.js");
@@ -7,7 +8,6 @@ var pending = adapter.pending;
 
 var Promise = fulfilled().constructor;
 
-Promise.prototype.progress = Promise.prototype.progressed;
 
 
 var Q = function(p) {
@@ -77,8 +77,7 @@ Q.fcall= function( fn ) {
 var isNodeJS = typeof process !== "undefined" &&
     typeof process.execPath === "string";
 
-Promise.prototype.fin = Promise.prototype.lastly;
-Promise.prototype.fail = Promise.prototype.caught;
+
 /*!
  *
 Copyright 2009–2012 Kristopher Michael Kowal. All rights reserved.
@@ -117,7 +116,7 @@ describe("done", function () {
                     called = true;
                 });
 
-                return promise.fail(function () { }).fin(function () {
+                return promise.caught(function () { }).lastly(function () {
                     assert.equal(called,true);
                     assert.equal(returnValue,undefined);
                 });
@@ -180,7 +179,7 @@ describe("done", function () {
                     }
                 );
 
-                return promise.fail(function () { }).fin(function () {
+                return promise.caught(function () { }).lastly(function () {
                     assert.equal(called,true);
                     assert.equal(returnValue,undefined);
                 });
@@ -190,6 +189,7 @@ describe("done", function () {
         if( isNodeJS ) {
             describe("and the errback throws", function () {
                 it("should rethrow that error in the next turn and return nothing", function () {
+                    var originalException;
                     while( originalException = process.listeners('uncaughtException').pop() ) {
                         process.removeListener('uncaughtException', originalException);
                     }
@@ -230,6 +230,7 @@ describe("done", function () {
 
             describe("and there is no errback", function () {
                 it("should throw the original error in the next turn", function () {
+                    var originalException;
                     while( originalException = process.listeners('uncaughtException').pop() ) {
                         process.removeListener('uncaughtException', originalException);
                     }

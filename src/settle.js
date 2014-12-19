@@ -1,27 +1,48 @@
 "use strict";
 module.exports =
-    function(Promise, Promise$_CreatePromiseArray, PromiseArray) {
+    function(Promise, PromiseArray) {
+var ASSERT = require("./assert.js");
+var PromiseInspection = Promise.PromiseInspection;
+var util = require("./util.js");
 
-    var SettledPromiseArray = require("./settled_promise_array.js")(
-        Promise, PromiseArray);
+function SettledPromiseArray(values) {
+    this.constructor$(values);
+}
+util.inherits(SettledPromiseArray, PromiseArray);
 
-    function Promise$_Settle(promises, useBound, caller) {
-        return Promise$_CreatePromiseArray(
-            promises,
-            SettledPromiseArray,
-            caller,
-            useBound === USE_BOUND && promises._isBound()
-                ? promises._boundTo
-                : void 0
-       ).promise();
+SettledPromiseArray.prototype._promiseResolved = function (index, inspection) {
+    ASSERT(typeof index === "number");
+    this._values[index] = inspection;
+    var totalResolved = ++this._totalResolved;
+    if (totalResolved >= this._length) {
+        this._resolve(this._values);
     }
+};
 
-    Promise.settle = function Promise$Settle(promises) {
-        return Promise$_Settle(promises, DONT_USE_BOUND, Promise.settle);
-    };
+//override
+SettledPromiseArray.prototype._promiseFulfilled = function (value, index) {
+    if (this._isResolved()) return;
+    ASSERT(typeof index === "number");
+    var ret = new PromiseInspection();
+    ret._bitField = IS_FULFILLED;
+    ret._settledValue = value;
+    this._promiseResolved(index, ret);
+};
+//override
+SettledPromiseArray.prototype._promiseRejected = function (reason, index) {
+    if (this._isResolved()) return;
+    ASSERT(typeof index === "number");
+    var ret = new PromiseInspection();
+    ret._bitField = IS_REJECTED;
+    ret._settledValue = reason;
+    this._promiseResolved(index, ret);
+};
 
-    Promise.prototype.settle = function Promise$settle() {
-        return Promise$_Settle(this, USE_BOUND, this.settle);
-    };
+Promise.settle = function (promises) {
+    return new SettledPromiseArray(promises).promise();
+};
 
+Promise.prototype.settle = function () {
+    return new SettledPromiseArray(this).promise();
+};
 };

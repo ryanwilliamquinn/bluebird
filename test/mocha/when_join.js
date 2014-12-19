@@ -1,3 +1,4 @@
+"use strict";
 /*
 Based on When.js tests
 
@@ -130,6 +131,28 @@ describe("when.join-test", function () {
                 done();
             }
         );
+    });
+
+    specify("should call last argument as a spread function", function(done) {
+        when.join(resolved(1), resolved(2), resolved(3), function(a, b, c) {
+            assert(a === 1);
+            assert(b === 2);
+            assert(c === 3);
+            done();
+        });
+    });
+
+
+    specify("gh-227", function(done) {
+        function a() {
+            return when.join(when.resolve(1), function () {
+                throw new Error();
+            });
+        }
+
+        a().caught(function(e) {
+            done();
+        });
     });
 
 });
