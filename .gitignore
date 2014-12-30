@@ -28,3 +28,4 @@ sauce_connect.log
 bump.js
 .DS_Store
 benchmark.js
+.idea/
